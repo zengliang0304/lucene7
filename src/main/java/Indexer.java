@@ -20,7 +20,10 @@ public class Indexer {
 
         System.out.println("Successful....");
 
-        String query = "select * from graph_dictionary";
+        String query = "select * from dictionary";
+
+//        String query = "select * from organization";
+
         try {
             Statement statement = connection.createStatement();
             ResultSet rs = statement.executeQuery(query);
