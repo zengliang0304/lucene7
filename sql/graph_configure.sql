@@ -1,6 +1,7 @@
 
 drop table if exists dictionary;
 drop table if exists organization;
+drop table if exists USER;
 
 create table dictionary (
   id int not null auto_increment,
@@ -21,6 +22,29 @@ create table organization (
   available bool default false,
   constraint pk_organization primary key(id)
 ) charset=utf8 ENGINE=InnoDB;
+
+#用户
+CREATE TABLE USER (
+  ID           INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  ERP          VARCHAR(128) NOT NULL UNIQUE,
+  USERNAME     VARCHAR(128) NOT NULL,
+  ORGANIZATION VARCHAR(128) COMMENT '用户所属的组织自机构，用来按照业务线为粒度进行权限控制',
+  IS_ENABLED   BOOLEAN      NOT NULL DEFAULT TRUE #账户是否启用
+)
+  CHARSET = utf8;
+
+INSERT INTO USER (ID, ERP, USERNAME, ORGANIZATION) VALUES
+  (1, 'bjliufangqi', '刘方琦', '京东金融-技术研发部-数据部'),
+  (2, 'bjluzhou', '卢周', '京东金融-技术研发部-数据部-图计算平台部'),
+  (3, 'qianyong11', '钱勇', '京东金融-技术研发部-数据部-图计算平台部'),
+  (4, 'xiangzuqi1', '项祖琪', '京东金融-技术研发部-数据部-图计算平台部'),
+  (5, 'haotong3', '郝彤', '京东金融-技术研发部-数据部-图计算平台部'),
+  (6, 'zhangwenjun26', '张文军', '京东金融-技术研发部-数据部-图计算平台部'),
+  (7, 'yuhui1', '余辉', '京东金融-技术研发部-数据部-图计算平台部'),
+  (8, 'zhouliang47', '周亮', '京东金融-技术研发部-数据部-图计算平台部'),
+  (9, 'duqiang3', '杜强', '京东金融-供应链金融部-信用与风险管理部-决策引擎部'),
+  (10, 'liuchangsheng3', '刘昌盛','京东金融-技术研发部-数据部-创新研发部-产品运营组'),
+  (11, 'fanyeliang', '范叶亮','京东金融-技术研发部-数据部-图计算平台部');
 
 insert into organization values(1, '图计算平台', 0, '0/', true);
 insert into organization values(2, '图管理平台', 1, '0/1/', true);

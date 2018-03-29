@@ -1,0 +1,317 @@
+包括了：通配符查询，组合查询，多值多字段查询
+
+
+
+package services.lucenefullindex
+
+import java.nio.file.Paths
+import javax.inject.Singleton
+
+import com.google.inject.Inject
+import models.JsonImplicit._
+import models.PageResult
+import models.Tables._
+import org.apache.lucene.analysis.Analyzer
+import org.apache.lucene.document.{Document, Field, StringField, TextField}
+import org.apache.lucene.index.IndexWriterConfig.OpenMode
+import org.apache.lucene.index.{DirectoryReader, IndexWriter, IndexWriterConfig, Term}
+import org.apache.lucene.queryparser.classic.MultiFieldQueryParser
+import org.apache.lucene.search.highlight._
+import org.apache.lucene.search.{BooleanQuery, _}
+import org.apache.lucene.store.FSDirectory
+import org.slf4j.LoggerFactory
+import org.wltea.analyzer.lucene.IKAnalyzer
+import play.api.Configuration
+import play.api.db.slick.{DatabaseConfigProvider, HasDatabaseConfigProvider}
+import slick.jdbc.JdbcProfile
+
+import scala.language.postfixOps
+
+trait UserFullIndexService {
+
+  def insertIndex(data: Seq[UserJoinRole])
+
+  def updateIndex(userJoinRole: UserJoinRole)
+
+  def deleteIndex(userJoinRole: List[UserJoinRole])
+
+  def queryIndex(term: String): List[UserJoinRole]
+
+  def pageQuery(keyword: String, pageIndex: Option[Int], pageSize: Option[Int]): PageResult[UserJoinRole]
+
+  def pageQueryMany(keyword: String, pageIndex: Option[Int], pageSize: Option[Int]): PageResult[UserJoinRole]
+
+  def queryMultIndex(index: List[String]): List[UserJoinRole]
+}
+
+@Singleton
+class LuceneUserFullIndexService @Inject()(config: Configuration, protected val dbConfigProvider: DatabaseConfigProvider) extends HasDatabaseConfigProvider[JdbcProfile] with UserFullIndexService {
+  private[this] val log = LoggerFactory.getLogger(this.getClass)
+
+  val analyzer: Analyzer = new IKAnalyzer(true)
+
+  /**
+    * 配置文件中索引文件的目录
+    */
+
+  val indexDir = config.get[String]("lucene.index.manager")
+
+  def documentId(id: Int, erp: String, username: String, roles: String, organization: String) = {
+    s"${id}&${erp}&${username}&${roles}&${organization}"
+  }
+
+  def convertUserRowToDocument(ur: UserJoinRole): Document = {
+    val document = new Document
+    document.add(new StringField("userid", s"${ur.id}", Field.Store.YES))
+    document.add(new TextField("usererp", s"${ur.erp}", Field.Store.YES))
+    document.add(new TextField("userusername", s"${ur.username}", Field.Store.YES))
+    document.add(new TextField("userroles", s"${ur.roles.map(row => row.name).mkString(",")}", Field.Store.YES))
+    document.add(new TextField("userorganization", s"${ur.organization.getOrElse("null")}", Field.Store.YES))
+    document.add(new StringField("userisEnabled", s"${ur.isEnabled}", Field.Store.YES))
+    document
+  }
+
+  /**
+    * 添加索引
+    */
+  override def insertIndex(data: Seq[UserJoinRole]): Unit = {
+    var iwriter: IndexWriter = null
+
+    try {
+      val fsDirectory = FSDirectory.open(Paths.get(indexDir))
+      val iwConfig = new IndexWriterConfig(analyzer)
+      iwConfig.setOpenMode(OpenMode.CREATE_OR_APPEND)
+      iwriter = new IndexWriter(fsDirectory, iwConfig)
+
+      data.foreach {
+        row => {
+          val document = convertUserRowToDocument(row)
+          iwriter.addDocument(document)
+        }
+      }
+      iwriter.commit
+    } catch {
+      case e: Exception =>
+        log.error("添加索引失败", e)
+    } finally {
+      if (iwriter != null) {
+        iwriter.close()
+      }
+    }
+  }
+
+  def queryIndex(keyword: String): List[UserJoinRole] = {
+    var reader: DirectoryReader = null
+
+    try {
+      val fsDirectory = FSDirectory.open(Paths.get(indexDir))
+      //实例化搜索器
+      reader = DirectoryReader.open(fsDirectory)
+      val searcher = new IndexSearcher(reader)
+
+      //组合查找
+      val erpQuery = new WildcardQuery(new Term("usererp", s"*$keyword*"))
+      val usernameQuery = new WildcardQuery(new Term("userusername", s"*$keyword*"))
+      val rolesQuery = new WildcardQuery(new Term("userroles", s"*$keyword*"))
+      val organizationQuery = new WildcardQuery(new Term("userorganization", s"*$keyword*"))
+      val allBuilder = new BooleanQuery.Builder()
+      allBuilder.add(erpQuery, BooleanClause.Occur.SHOULD)
+      allBuilder.add(usernameQuery, BooleanClause.Occur.SHOULD)
+      allBuilder.add(rolesQuery, BooleanClause.Occur.SHOULD)
+      allBuilder.add(organizationQuery, BooleanClause.Occur.SHOULD)
+      val query = allBuilder.build()
+
+      //搜索相似度最高的5条记录
+      val topDocs = searcher.search(query, 1000)
+      val simpleHtmlFormatter = new SimpleHTMLFormatter("<font color=\"red\">", "</font>") //设定高亮显示的格式<B>keyword</B>,此为默认的格式
+      val highlighter = new Highlighter(simpleHtmlFormatter, new QueryScorer(query))
+
+      if (topDocs.totalHits == 0) {
+        List.empty[UserJoinRole]
+      } else {
+        topDocs.scoreDocs.map {
+          d => {
+            val id = searcher.doc(d.doc).get("userid").toInt
+
+            val erp = {
+              val temp = searcher.doc(d.doc).get("usererp")
+              if (temp == null)
+                null
+              else {
+                val lighterText = highlighter.getBestFragment(analyzer, keyword, searcher.doc(d.doc).get("usererp"))
+                if (lighterText == null) temp else lighterText
+              }
+            }
+
+            val username = {
+              val temp = searcher.doc(d.doc).get("userusername")
+              if (temp == null)
+                null
+              else {
+                val lighterText = highlighter.getBestFragment(analyzer, keyword, searcher.doc(d.doc).get("userusername"))
+                if (lighterText == null) temp else lighterText
+              }
+            }
+
+            val roles = {
+              val temp = searcher.doc(d.doc).get("userroles")
+              if (temp == null)
+                null
+              else {
+                val lighterText = highlighter.getBestFragment(analyzer, keyword, searcher.doc(d.doc).get("userroles"))
+                if (lighterText == null) temp else lighterText
+              }
+            }
+
+            val organization = {
+              val temp = searcher.doc(d.doc).get("userorganization")
+              if (temp == null)
+                null
+              else {
+                val lighterText = highlighter.getBestFragment(analyzer, keyword, searcher.doc(d.doc).get("userorganization"))
+                if (lighterText == null) temp else lighterText
+              }
+            }
+            val isEnabled = if (searcher.doc(d.doc).get("userisEnabled") == "true") true else false
+            UserJoinRole(id, erp, username, Some(organization), isEnabled, roles.split(",").map(row => RoleRow(0, row, "", Some(""))).toSeq)
+          }
+        }.toList
+      }
+    } catch {
+      case e: Exception => {
+        log.error("高亮检索索引失败", e)
+        List.empty[UserJoinRole]
+      }
+    } finally {
+      if (reader != null) {
+        reader.close()
+      }
+    }
+  }
+
+  override def updateIndex(row: UserJoinRole): Unit = {
+    var writer: IndexWriter = null
+    try {
+      val fsDirectory = FSDirectory.open(Paths.get(indexDir))
+      val conf = new IndexWriterConfig(new IKAnalyzer)
+      writer = new IndexWriter(fsDirectory, conf)
+      writer.deleteDocuments(new TermQuery(new Term("userid", row.id.toString)))
+      writer.addDocument(convertUserRowToDocument(row))
+      writer.commit
+    } catch {
+      case e: Exception =>
+        log.error("更新索引失败", e)
+    } finally {
+      if (writer != null) {
+        writer.close()
+      }
+    }
+  }
+
+  override def deleteIndex(u: List[UserJoinRole]) = {
+    var writer: IndexWriter = null
+    try {
+      val fsDirectory = FSDirectory.open(Paths.get(indexDir))
+      val conf = new IndexWriterConfig(new IKAnalyzer)
+      writer = new IndexWriter(fsDirectory, conf)
+      u.map(row => {
+        writer.deleteDocuments(new TermQuery(new Term("userid", row.id.toString)))
+      })
+      writer.commit
+    } catch {
+      case e: Exception =>
+        log.error("删除索引失败", e)
+    } finally {
+      if (writer != null) {
+        writer.close()
+      }
+    }
+  }
+
+  override def pageQuery(keyWord: String, pageIndex: Option[Int], pageSize: Option[Int]): PageResult[UserJoinRole] = {
+    val defaultPageSize = config.get[Int]("pageResult.defaultPageSize")
+    val defaultPageIndex = config.get[Int]("pageResult.defaultPageIndex")
+    val index = pageIndex.getOrElse(defaultPageIndex)
+    val size = pageSize.getOrElse(defaultPageSize)
+    val list = queryIndex(keyWord)
+    val data = list.drop((index - 1) * size).take(size)
+    val totalCount = list.size
+    PageResult(data, index, (totalCount / size + 1), totalCount)
+  }
+
+  override def pageQueryMany(keyWord: String, pageIndex: Option[Int], pageSize: Option[Int]): PageResult[UserJoinRole] = {
+    val keys = keyWord.split(",").map(row => row.trim).toList
+    val defaultPageSize = config.get[Int]("pageResult.defaultPageSize")
+    val defaultPageIndex = config.get[Int]("pageResult.defaultPageIndex")
+    val index = pageIndex.getOrElse(defaultPageIndex)
+    val size = pageSize.getOrElse(defaultPageSize)
+    val list = queryMultIndex(keys)
+    val data = list.drop((index - 1) * size).take(size)
+    val totalCount = list.size
+    PageResult(data, index, (totalCount / size + 1), totalCount)
+  }
+
+  def highLight(key: String, text: String, query: BooleanQuery): String = {
+    val simpleHtmlFormatter = new SimpleHTMLFormatter("<font color=\"red\">", "</font>")
+    val highlighter = new Highlighter(simpleHtmlFormatter, new QueryScorer(query))
+    val resutl = highlighter.getBestFragment(analyzer, key, text)
+    if (resutl == null) {
+      text
+    } else {
+      resutl.replaceAll("""<font color="red"><font color="red">""","""<font color="red">""").replaceAll("""</font></font>""","""</font>""")
+    }
+  }
+
+  override def queryMultIndex(keywords: List[String]): List[UserJoinRole] = {
+    var reader: DirectoryReader = null
+    try {
+      val fsDirectory = FSDirectory.open(Paths.get(indexDir))
+      //实例化搜索器
+      reader = DirectoryReader.open(fsDirectory)
+      val searcher = new IndexSearcher(reader)
+      val fields = Array("usererp", "userusername", "userroles", "userorganization")
+      val flags = Array(BooleanClause.Occur.SHOULD, BooleanClause.Occur.SHOULD, BooleanClause.Occur.SHOULD, BooleanClause.Occur.SHOULD)
+
+      //TopDocs 搜索返回的结果
+      val allBuilder = new BooleanQuery.Builder()
+      keywords.map(keyword => {
+        val multiQuery = MultiFieldQueryParser.parse(keyword, fields, flags, analyzer)
+        allBuilder.add(multiQuery, BooleanClause.Occur.SHOULD)
+      })
+
+      val query = allBuilder.build()
+      val topDocs = searcher.search(query, 1000)
+      val scoreDocs = topDocs.scoreDocs // 搜索返回的结果集合
+
+      scoreDocs.map(d => {
+        System.out.println("得分：" + d.score)
+        var id = searcher.doc(d.doc).get("userid").toInt
+        var erp, username, organization, roles = ""
+        val isEnabled = if (searcher.doc(d.doc).get("userisEnabled") == "true") true else false
+        id = searcher.doc(d.doc).get("userid").toInt
+        erp = searcher.doc(d.doc).get("usererp")
+        username = searcher.doc(d.doc).get("userusername")
+        organization = searcher.doc(d.doc).get("userorganization")
+        roles = searcher.doc(d.doc).get("userroles")
+        for (key <- keywords) {
+          erp = highLight(key, erp, query)
+          username = highLight(key, username, query)
+          organization = highLight(key, organization, query)
+          roles = highLight(key, roles, query)
+        }
+        UserJoinRole(id, erp, username, Some(organization), isEnabled, roles.split(",").map(row => RoleRow(0, row, "", Some(""))).toSeq)
+      }).toList
+
+    } catch {
+      case e: Exception => {
+        log.error("高亮检索索引失败", e)
+        List.empty[UserJoinRole]
+      }
+    } finally {
+      if (reader != null) {
+        reader.close()
+      }
+    }
+  }
+}
+
