@@ -1,4 +1,9 @@
-./target
+.idea/workspace.xml
+production/
+out
+.gitignore
+license.txt
+.target
 .classpath
 .project
 .settings/
@@ -19,10 +24,11 @@ release.properties
 *.log
 dump.json
 **/test.json
+graph_importer/src/test/resources/test.groovy
 /.idea
 /.idea_modules
 /.classpath
 /.project
 /.settings
 /RUNNING_PID
-
+.idea
