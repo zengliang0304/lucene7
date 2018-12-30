@@ -1,30 +1,47 @@
 package com.lucene.demo01;
 
+import com.lucene.utils.PropertiesClient;
+import com.lucene.utils.mysqlClient;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.store.FSDirectory;
+import org.wltea.analyzer.lucene.IKAnalyzer;
 
 import java.io.IOException;
 import java.nio.file.Paths;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.Date;
 
+/***
+ * 从mysql中读取数据建立索引
+ *
+ *
+ * 备注：StringField 不分词 ， TextField分词
+ *
+ */
 public class Indexer {
-    private final static String USER = "root";
-    private final static String PASSWORD = "123456";
-    static String indexDir = "/Users/huiyu/Downloads/lucene/index";
 
-    public static void main(String[] args) throws SQLException {
-        Connection connection = getConnection();
+    static String indexDir = PropertiesClient.INDEX;
+
+    public static void main(String[] args) {
+
+        CreateIndex();
+
+    }
+
+    public static void CreateIndex() {
+
+        Connection connection = mysqlClient.getConnection();
 
         System.out.println("Successful....");
 
-        String query = "select * from dictionary";
-
-//        String query = "select * from organization";
+        String query = "SELECT * FROM USER";
 
         try {
             Statement statement = connection.createStatement();
@@ -34,7 +51,13 @@ public class Indexer {
             long startTime = new Date().getTime();
             while (rs.next()) {
                 Document document = new Document();
-                document.add(new TextField("name", rs.getString("name").toString(), Field.Store.YES));
+
+                System.out.println(rs.getString("id")+rs.getString("erp")+rs.getString("username")+rs.getString("organization"));
+
+                document.add(new StringField("id", rs.getString("id"), Field.Store.YES));
+                document.add(new TextField("erp", rs.getString("erp"), Field.Store.YES));
+                document.add(new TextField("username", rs.getString("username"), Field.Store.YES));
+                document.add(new TextField("organization", rs.getString("organization"), Field.Store.YES));
                 writer.addDocument(document);
             }
             long endTime = new Date().getTime();
@@ -45,26 +68,15 @@ public class Indexer {
         } catch (Exception e) {
             e.printStackTrace();
         }
-    }
 
-    static Connection getConnection() {
-        Connection con = null;
-        try {
-            con = DriverManager.getConnection("jdbc:mysql://localhost:3306/demo", USER, PASSWORD);
-        } catch (Exception e) {
-            System.out.println("Error while connnection....");
-            e.printStackTrace();
-        }
-        return con;
     }
-
 
     static IndexWriter CreateWriter() {
         FSDirectory fsDirectory;
         IndexWriter writer = null;
         try {
             fsDirectory = FSDirectory.open(Paths.get(indexDir));
-            IndexWriterConfig conf = new IndexWriterConfig(new PatternAnalyzer());
+            IndexWriterConfig conf = new IndexWriterConfig(new IKAnalyzer());
             writer = new IndexWriter(fsDirectory, conf);
         } catch (IOException e) {
             // TODO Auto-generated catch block

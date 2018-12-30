@@ -1,29 +1,29 @@
 package com.lucene.demo01;
 
 import com.lucene.utils.PropertiesClient;
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.*;
 import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.util.QueryBuilder;
 
 import java.nio.file.Paths;
 
-public class Searcher {
+
+/***
+ *  通配符查找
+ */
+public class WildCardcreatQuery {
 
     static String indexDir = PropertiesClient.INDEX;
 
     public static void main(String[] args) {
 
-        SelectQuery("cach"); //精确查找
+        SelectQuery("小米");
 
     }
 
     static void SelectQuery(String text) {
-
 
         try {
 
@@ -35,7 +35,7 @@ public class Searcher {
 
             Query query = null;
 
-            query = creatQuery(text);
+            query = WildCardcreatQuery(text);
 
             TopDocs docs = searcher.search(query, 10);
 
@@ -47,7 +47,7 @@ public class Searcher {
 
                 for (ScoreDoc scoreDoc : docs.scoreDocs) {
 
-                    System.out.println(searcher.doc(scoreDoc.doc).get("username"));
+                    System.out.println(searcher.doc(scoreDoc.doc).get("erp"));
 
                 }
             }
@@ -57,10 +57,8 @@ public class Searcher {
 
     }
 
-    static Query creatQuery(String text) {
-        Analyzer analyzer = new StandardAnalyzer();
-        QueryBuilder builder = new QueryBuilder(analyzer);
-        Query query = builder.createPhraseQuery("name", text);
+    static Query WildCardcreatQuery(String text) {
+        WildcardQuery query = new WildcardQuery(new Term("name", "*" + text + "*"));
         return query;
     }
 
